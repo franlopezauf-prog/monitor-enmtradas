@@ -1,5 +1,5 @@
 name: Revisar entradas
-
+ 
 on:
   schedule:
     - cron: "3,13,23,33,43,53 * * * *"
@@ -9,12 +9,20 @@ on:
         description: "Enviar aviso de prueba"
         type: boolean
         default: false
-
+ 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar navegador
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
       - name: Revisar la pagina
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
@@ -24,3 +32,4 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TEST_NOTIFICATION: ${{ inputs.test_notification }}
         run: python3 check_entradas.py
+ 
