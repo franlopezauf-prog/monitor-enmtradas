@@ -1,8 +1,9 @@
 """Monitor de entradas - Semifinal URBA Top 14 (Newman vs Alumni).
-
-Baja la pagina y, si ya NO dice "Entradas agotadas", avisa por email (Gmail)
-y/o por Telegram, segun los secretos que tengas cargados.
-No completa ni envia ningun formulario: la compra la confirmas vos.
+ 
+La pagina carga su contenido con JavaScript (al principio dice "Cargando..."),
+asi que abrimos un navegador real (Playwright), esperamos a que termine de
+cargar y leemos el texto que ve una persona. Si NO dice "agotadas", avisamos
+por email (Gmail) y/o Telegram. No completa ningun formulario.
 """
 import os
 import smtplib
@@ -10,11 +11,11 @@ import sys
 import urllib.parse
 import urllib.request
 from email.message import EmailMessage
-
+ 
 URL = "https://playoffsurba2026.vercel.app/"
-SOLD_OUT_TEXT = "entradas agotadas"
-
-
+SOLD_OUT_WORD = "agotad"  # agotada / agotadas / agotado
+ 
+ 
 def send_telegram(text: str) -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
@@ -23,8 +24,8 @@ def send_telegram(text: str) -> None:
         f"https://api.telegram.org/bot{token}/sendMessage", data=data
     )
     urllib.request.urlopen(req, timeout=20).read()
-
-
+ 
+ 
 def send_email(subject: str, text: str) -> None:
     user = os.environ["GMAIL_USER"]
     password = os.environ["GMAIL_APP_PASSWORD"]
@@ -37,8 +38,8 @@ def send_email(subject: str, text: str) -> None:
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
         smtp.login(user, password)
         smtp.send_message(msg)
-
-
+ 
+ 
 def notify(subject: str, text: str) -> None:
     """Envia por todos los canales configurados."""
     sent = False
@@ -58,36 +59,60 @@ def notify(subject: str, text: str) -> None:
             print(f"Fallo Telegram: {exc}")
     if not sent:
         raise RuntimeError("No se pudo enviar por ningun canal. Revisa los secretos.")
-
-
-def fetch_page() -> str:
-    req = urllib.request.Request(URL, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", errors="replace")
-
-
+ 
+ 
+def get_page_text() -> str:
+    """Abre la pagina en un navegador y devuelve el texto ya cargado."""
+    from playwright.sync_api import sync_playwright
+ 
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(URL, wait_until="networkidle", timeout=45000)
+        try:
+            # esperar a que desaparezca el "Cargando..."
+            page.wait_for_function(
+                "() => !document.body.innerText.toLowerCase().includes('cargando')",
+                timeout=20000,
+            )
+        except Exception:
+            pass
+        text = page.inner_text("body")
+        browser.close()
+        return text
+ 
+ 
 def main() -> int:
     if os.environ.get("TEST_NOTIFICATION") == "true":
         notify("Prueba: monitor de entradas", "Prueba OK: el monitor esta funcionando.")
         return 0
-
+ 
     try:
-        html = fetch_page()
-    except Exception as exc:  # error de red: no avisamos, reintenta en 10 min
+        text = get_page_text()
+    except Exception as exc:  # error de red o navegador: no avisamos
         print(f"No se pudo leer la pagina: {exc}")
         return 1
-
-    if SOLD_OUT_TEXT in html.lower():
+ 
+    lower = text.lower()
+    resumen = " | ".join(line.strip() for line in text.splitlines() if line.strip())
+    print(f"Texto visto en la pagina: {resumen[:400]}")
+ 
+    if "cargando" in lower:
+        print("La pagina no termino de cargar. No se avisa; se reintenta luego.")
+        return 1
+ 
+    if SOLD_OUT_WORD in lower:
         print("Sigue agotado.")
         return 0
-
-    print("Ya NO dice 'Entradas agotadas'. Enviando aviso.")
+ 
+    print("La pagina cargo y NO dice 'agotadas'. Enviando aviso.")
     notify(
         "ENTRADAS DISPONIBLES - Newman vs Alumni",
         f"La pagina ya no dice 'Entradas agotadas'. Entra rapido: {URL}",
     )
     return 0
-
-
+ 
+ 
 if __name__ == "__main__":
     sys.exit(main())
+ 
